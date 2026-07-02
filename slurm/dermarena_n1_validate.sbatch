@@ -19,7 +19,11 @@ set -euo pipefail
 CEREBRA=/fs04/scratch2/ub62/ssim0070/Cerebra
 EVAL=/fs04/scratch2/ub62/ssim0070/DermArena/dataset_collection/eval
 DATA=/fs04/scratch2/ub62/ssim0070/dermarena_dx_v2
-DEV=$DATA/dev_slices
+declare -A DEV=(
+  [rds]="$DATA/stratified/MM_RDS_benchmark_dev500.jsonl"
+  [rdc]="$DATA/stratified/MM_RDC_benchmark_dev500.jsonl"
+  [dxtest]="$DATA/stratified/DxTest_benchmark_dev500.jsonl"
+)
 HYP=/fs04/scratch2/ub62/ssim0070/DermArena/dataset_collection/data/benchmark/icd11_hypernym.json
 PY=/fs04/scratch2/ub62/ssim0070/dermagent/bin/python
 OUT=$CEREBRA/cerebra_cache/dermarena/n1_validate
@@ -43,10 +47,10 @@ declare -A BENCH=( [rds]="$DATA/MM_RDS_benchmark.jsonl" [rdc]="$DATA/MM_RDC_benc
 # ── 1. Run the full pipeline, n=1 per task ──────────────────────────────────
 for TASK in rds rdc dxtest; do
   echo "=================== PIPELINE $TASK (classify + RUN + --thinking) ==================="
-  $PY -m cerebra.dermarena.pipeline --task "$TASK" --jsonl "$DEV/${TASK}_dev300.jsonl" \
+  $PY -m cerebra.dermarena.pipeline --task "$TASK" --jsonl "${DEV[$TASK]}" \
       --limit 1 --thinking --out "$OUT/${TASK}_pred.jsonl"
   # 1-row benchmark matching the single predicted case (clean n=1 grade, not diluted by misses)
-  head -1 "$DEV/${TASK}_dev300.jsonl" > "$OUT/${TASK}_bench1.jsonl"
+  head -1 "${DEV[$TASK]}" > "$OUT/${TASK}_bench1.jsonl"
 done
 
 # ── 2. Grade ────────────────────────────────────────────────────────────────
