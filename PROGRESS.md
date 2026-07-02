@@ -16,7 +16,9 @@ so the difference is purely the agent scaffold:
 | **Our Agent** (Cerebra dermarena) | qwen/qwen3.5-27b |
 Then extend by **varying the backbone**: add **Qwen3.5-9B** and **GPT-5**.
 Eval = (system) × (backbone). Fair-comparison rule: same model, same dev set, same grader.
-Prereq: regenerate `dev300` as a **stratified** representative sample first.
+**Dev set = stratified dev500** (500/task): `dermarena_dx_v2/stratified/*_dev500.jsonl`
+(seed=42, v1 rules: image_status×is_rare×chapter strata + disease_cap 3/journal_cap 16;
+see `stratified/STRATIFICATION.md`). Supersedes the old non-stratified dev300.
 
 Cerebra already gives us a two-tier architecture (orchestrator `SuperAgent` →
 specialist agents → `SummaryAgent` fusion) with planner/executor/memory loops.
