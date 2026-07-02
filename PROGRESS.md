@@ -159,7 +159,18 @@ Read of the core contracts, to reuse rather than fight them:
       grading runs in ONE GPU sbatch; no phase-split / local serving needed.
 - [~] **n=1-per-task GPU+reasoning validation submitted** — `slurm/dermarena_n1_validate.sbatch`
       (job 58075205): full pipeline on 1 shared case/task → grade (score_dx +hypernyms / grade_dxtest).
-- [ ] Read n=1 grades; then scale to dev300 per task + inference/grading postchecks.
+- [x] **n=1 GPU validation ran** (job 58075205, L40S, 28 min, full pipeline + reasoning).
+      Findings on case pmid_27484467_1 (GT=IBD, small-bowel histopath — a non-derm case):
+      - ✅ Classification correct (both images → histopathology → MedGemma, not derm specialists).
+      - ✅ Vision ran; RDC top-1 = Crohn's disease (clinically an IBD).
+      - ❌ **`--thinking` returns EMPTY content on most calls** (PROPOSE + all experts empty;
+        moderator carried it) — reasoning exceeds the 3000 budget. FIX: retry-on-empty
+        (reasoning-off) in `llm.py`. RDS moderator also truncated → blank prediction.
+      - ❌ Grading errored: `/mnt/hdd` perm denied — forgot `LLM_LEDGER_PATH` (known gotcha).
+        FIX: set in sbatch; re-graded on login node → works (scored=1).
+      - 📊 Grade 0/0/0, but INSIGHT: predicting a SUBTYPE (Crohn's) of the gold umbrella
+        (IBD) gets NO family credit (hypernym is broader-term only). Strategy implication.
+- [ ] Re-run n=1 with fixes (retry-on-empty + ledger path); then dev300 + postchecks.
 
 ## Caveats surfaced
 - **PanDerm license conflict**: DermLIP README body says `cc-by-nc-nd-4.0` (non-commercial,

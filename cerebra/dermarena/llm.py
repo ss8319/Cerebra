@@ -160,20 +160,29 @@ class OpenRouterMLLM:
         extra = {k: v for k, v in self.sampling.items() if k in _EXTRA_PARAMS}
         extra["reasoning"] = {"enabled": True} if self.thinking else {"enabled": False}
 
-        resp = self.client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "system", "content": system},
-                      {"role": "user", "content": content}],
-            max_tokens=max_tokens,
-            extra_body=extra,
-            **native,
-        )
-        usage = resp.usage
-        pt = getattr(usage, "prompt_tokens", 0) or 0
-        ct = getattr(usage, "completion_tokens", 0) or 0
+        messages = [{"role": "system", "content": system},
+                    {"role": "user", "content": content}]
+
+        def _call(ex, mt):
+            r = self.client.chat.completions.create(
+                model=self.model, messages=messages, max_tokens=mt, extra_body=ex, **native)
+            u = r.usage
+            return ((r.choices[0].message.content or ""),
+                    getattr(u, "prompt_tokens", 0) or 0,
+                    getattr(u, "completion_tokens", 0) or 0)
+
+        text, pt, ct = _call(extra, max_tokens)
+        # Thinking can spend the whole budget on reasoning and return EMPTY content.
+        # Retry once with reasoning OFF so we always get a usable answer (and stop paying
+        # for wasted thinking tokens on that call).
+        if self.thinking and not text.strip():
+            extra_off = dict(extra)
+            extra_off["reasoning"] = {"enabled": False}
+            t2, pt2, ct2 = _call(extra_off, max_tokens)
+            text, pt, ct = t2, pt + pt2, ct + ct2
+
         rec = self.ledger.record(pt, ct)
         return LLMResult(
-            text=resp.choices[0].message.content or "",
-            prompt_tokens=pt, completion_tokens=ct,
+            text=text, prompt_tokens=pt, completion_tokens=ct,
             call_cost_usd=rec["call_cost_usd"], cumulative_usd=rec["cumulative_usd"],
         )

@@ -32,6 +32,8 @@ export TRANSFORMERS_OFFLINE=1
 export PYTHONPATH=$CEREBRA
 export DERMARENA_BUDGET_USD=10
 export OPENROUTER_API_KEY=$(grep -m1 '^OPENROUTER_API_KEY=' /fs04/scratch2/ub62/ssim0070/DermArena_data/.env | cut -d= -f2)
+# Graders' judge-client writes a ledger; its default /mnt/hdd doesn't exist on M3 -> set it.
+export LLM_LEDGER_PATH="$OUT/llm_ledger.jsonl"
 
 echo "[gpu] $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader)"
 cd "$CEREBRA"
