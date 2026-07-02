@@ -111,8 +111,18 @@ def main():
         workers = 1
 
     def _work(c):
-        return run_case(c, mllm, tools=tools, do_run=not args.no_run, revise=args.revise,
-                        classify=not args.no_classify)
+        # Never let one case abort a long run — record the error and continue.
+        try:
+            return run_case(c, mllm, tools=tools, do_run=not args.no_run, revise=args.revise,
+                            classify=not args.no_classify)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return {"_id": c.id, "task": c.task, "prediction": "", "prediction_list": [],
+                    "error": f"{type(e).__name__}: {e}", "candidates": [], "n_findings": 0,
+                    "ground_truth": c.ground_truth.get("diagnosis"),
+                    "diagnostic_test_gt": c.ground_truth.get("diagnostic_test_gt"),
+                    "cumulative_usd": mllm.ledger.spent()}
 
     records = []
     with open(args.out, "w") as fout:

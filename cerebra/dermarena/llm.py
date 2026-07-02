@@ -11,6 +11,7 @@ import io
 import json
 import os
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -163,13 +164,24 @@ class OpenRouterMLLM:
         messages = [{"role": "system", "content": system},
                     {"role": "user", "content": content}]
 
-        def _call(ex, mt):
-            r = self.client.chat.completions.create(
-                model=self.model, messages=messages, max_tokens=mt, extra_body=ex, **native)
-            u = r.usage
-            return ((r.choices[0].message.content or ""),
-                    getattr(u, "prompt_tokens", 0) or 0,
-                    getattr(u, "completion_tokens", 0) or 0)
+        def _call(ex, mt, _tries=4):
+            # OpenRouter occasionally returns a non-JSON body (gateway/5xx/rate-limit),
+            # which the SDK surfaces as JSONDecodeError/APIError. Retry with backoff so a
+            # single transient hiccup can't kill a long run.
+            last = None
+            for attempt in range(_tries):
+                try:
+                    r = self.client.chat.completions.create(
+                        model=self.model, messages=messages, max_tokens=mt, extra_body=ex, **native)
+                    u = r.usage
+                    return ((r.choices[0].message.content or ""),
+                            getattr(u, "prompt_tokens", 0) or 0,
+                            getattr(u, "completion_tokens", 0) or 0)
+                except Exception as e:
+                    last = e
+                    if attempt < _tries - 1:
+                        time.sleep(2 * (2 ** attempt))  # 2s, 4s, 8s
+            raise last
 
         text, pt, ct = _call(extra, max_tokens)
         # Thinking can spend the whole budget on reasoning and return EMPTY content.

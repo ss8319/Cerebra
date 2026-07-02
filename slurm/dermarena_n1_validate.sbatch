@@ -48,7 +48,7 @@ declare -A BENCH=( [rds]="$DATA/MM_RDS_benchmark.jsonl" [rdc]="$DATA/MM_RDC_benc
 for TASK in rds rdc dxtest; do
   echo "=================== PIPELINE $TASK (classify + RUN + --thinking) ==================="
   $PY -m cerebra.dermarena.pipeline --task "$TASK" --jsonl "${DEV[$TASK]}" \
-      --limit 1 --thinking --out "$OUT/${TASK}_pred.jsonl"
+      --limit 1 --thinking --out "$OUT/${TASK}_pred.jsonl" || echo "[warn] $TASK pipeline failed (continuing)"
   # 1-row benchmark matching the single predicted case (clean n=1 grade, not diluted by misses)
   head -1 "${DEV[$TASK]}" > "$OUT/${TASK}_bench1.jsonl"
 done
