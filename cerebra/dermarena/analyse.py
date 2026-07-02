@@ -22,18 +22,28 @@ ROUTE_TOOLS = {
 }
 
 
-def build_plan(case: Case) -> Dict[str, Any]:
-    """Build the deterministic tool plan for a case.
+def build_plan(case: Case, modality_by_path: Dict[str, str] = None) -> Dict[str, Any]:
+    """Build the tool plan for a case.
+
+    Args:
+        modality_by_path: {abs_path: modality} from Step-1 classification. When given,
+            it OVERRIDES the dataset's `modality` label (which we don't trust) for routing.
 
     Returns a dict:
       {
         case_id, task, has_images, n_images_present, n_images_missing,
-        routing: <summarize_routing>,
+        routing: <summarize_routing>, used_classified_modality: bool,
         tool_calls: [ {tool, route, image_paths, modalities}, ... ],
       }
     Only images that exist on disk are scheduled; missing ones are counted, not planned.
     """
+    modality_by_path = modality_by_path or {}
     resolved = case.resolved_images()
+    # Apply classified modality over the (untrusted) supplied label.
+    for im in resolved:
+        if im.get("abs_path") in modality_by_path:
+            im["provided_modality"] = im.get("modality")
+            im["modality"] = modality_by_path[im["abs_path"]]
     present = [im for im in resolved if im.get("exists")]
     missing = [im for im in resolved if not im.get("exists")]
 
@@ -61,5 +71,6 @@ def build_plan(case: Case) -> Dict[str, Any]:
         "n_images_missing": len(missing),
         "missing_paths": [im.get("abs_path") for im in missing],
         "routing": summarize_routing(present),
+        "used_classified_modality": bool(modality_by_path),
         "tool_calls": tool_calls,
     }

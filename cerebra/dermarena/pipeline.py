@@ -38,8 +38,16 @@ def run_case(
     tools: Optional[Dict[str, Any]] = None,
     do_run: bool = True,
     revise: bool = False,
+    classify: bool = True,
 ) -> Dict[str, Any]:
-    plan = build_plan(case)
+    # Step 1: classify modality (don't trust the dataset label), then route on it.
+    modality_by_path = None
+    if classify and case.has_images:
+        from cerebra.dermarena.classify import classify_case
+        # non-thinking client (perception task), shares the ledger for budget accounting
+        classify_mllm = OpenRouterMLLM(thinking=False, ledger=mllm.ledger)
+        modality_by_path = classify_case(case, mllm=classify_mllm)
+    plan = build_plan(case, modality_by_path=modality_by_path)
     proposal = propose_candidates(case, mllm=mllm)
     candidates = proposal["candidates"]
 
@@ -60,8 +68,10 @@ def run_case(
         "n_findings": len(findings),
         "ground_truth": case.ground_truth.get("diagnosis"),
         "diagnostic_test_gt": case.ground_truth.get("diagnostic_test_gt"),
+        "classified_modality": modality_by_path,
         "trace": {
             "plan_routing": plan["routing"],
+            "used_classified_modality": plan["used_classified_modality"],
             "propose_raw": proposal.get("raw_response"),
             "findings": findings,
             "expert_opinions": result["expert_opinions"],
@@ -78,6 +88,8 @@ def main():
     ap.add_argument("--jsonl", default=None, help="explicit input JSONL (e.g. dev subset)")
     ap.add_argument("--out", default="dermarena_preds.jsonl")
     ap.add_argument("--no-run", action="store_true", help="skip GPU vision tools (debate only)")
+    ap.add_argument("--no-classify", action="store_true",
+                    help="trust the dataset modality label instead of re-classifying (Step 1 off)")
     ap.add_argument("--revise", action="store_true", help="add a debate revision round")
     ap.add_argument("--thinking", action="store_true",
                     help="run Qwen3.5-27B with reasoning ON (HF thinking params + 3k token "
@@ -99,7 +111,8 @@ def main():
         workers = 1
 
     def _work(c):
-        return run_case(c, mllm, tools=tools, do_run=not args.no_run, revise=args.revise)
+        return run_case(c, mllm, tools=tools, do_run=not args.no_run, revise=args.revise,
+                        classify=not args.no_classify)
 
     records = []
     with open(args.out, "w") as fout:

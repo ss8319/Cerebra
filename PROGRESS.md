@@ -46,7 +46,9 @@ from a text-only step.
 
 ```
  0. LOAD      row → case (report + images + exam/tables + task_type)
- 1. ANALYSE   route images by modality (modality_router) → tool plan   (deterministic)
+ 1. ANALYSE   CLASSIFY each image's modality with the base MLLM (do NOT trust the
+             dataset label — ~40% are `unknown`), then route → tool plan
+             (`classify.py`; classification runs non-thinking/cheap)
  2. PROPOSE   base MLLM (sees images + report) → candidate diagnosis list  ★LLM
  3. RUN       clinical_photo/dermoscopy → PanDerm + DermoGPT re-rank the candidates;
               other + unknown → MedGemma describes                     (deterministic exec)
@@ -149,8 +151,15 @@ Read of the core contracts, to reuse rather than fight them:
 - [x] **Dev300 subsets** — `dermarena_dx_v2/dev_slices/{rds,rdc,dxtest}_dev300.jsonl` (300
       shared cases, seed 20260702, + manifest) via `make_dev_subset.py`.
 - [x] **Client concurrency** — pipeline `--workers` (thread-safe ledger; forced to 1 when GPU RUN on).
-- [ ] GPU bring-up (SLURM) to smoke-test RUN (PanDerm/DermoGPT/MedGemma load + findings).
-- [ ] Dev300 run per task (--no-run first, then full) + grading via score_dx.py / grade_dxtest.py + postchecks.
+- [x] **Step 1 = modality CLASSIFICATION** (`classify.py`) — don't trust dataset labels;
+      base MLLM re-derives each image's modality, routing uses that. Tested (agrees on
+      clean cases; real value on the ~40% `unknown`). Toggle: `--no-classify`.
+- [x] **Reasoning toggle** (`--thinking`) — HF thinking params + 3k budget.
+- [x] **Compute nodes have internet** (verified openrouter_http=200) → whole pipeline +
+      grading runs in ONE GPU sbatch; no phase-split / local serving needed.
+- [~] **n=1-per-task GPU+reasoning validation submitted** — `slurm/dermarena_n1_validate.sbatch`
+      (job 58075205): full pipeline on 1 shared case/task → grade (score_dx +hypernyms / grade_dxtest).
+- [ ] Read n=1 grades; then scale to dev300 per task + inference/grading postchecks.
 
 ## Caveats surfaced
 - **PanDerm license conflict**: DermLIP README body says `cc-by-nc-nd-4.0` (non-commercial,
