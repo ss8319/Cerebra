@@ -33,6 +33,29 @@ How to apply:
 - In tool code, don't hardcode a guessed value — pull from the registry / model config,
   and leave a `TODO` if a value is still a placeholder.
 
+## RULE: Anticipate thinking/reasoning-budget exhaustion
+
+Reasoning ("thinking") models (Qwen3.x, o-series, etc.) spend tokens on hidden CoT
+BEFORE emitting the answer. If reasoning consumes the whole `max_tokens` budget, the
+model returns **empty `content`** — and you still PAY for the wasted reasoning tokens
+(~10-40x cost). This is silent: the call "succeeds" with a blank answer, so a pipeline
+can limp on with empty intermediate steps (dead debate, empty candidate lists).
+
+Whenever you enable reasoning:
+- **Budget generously** — reasoning needs thousands of tokens on top of the answer;
+  a 512-token cap will reliably return empty. Size `max_tokens` for reasoning + answer.
+- **Detect + retry on empty** — if `content` is blank, retry once with reasoning OFF
+  (guarantees a usable answer, stops paying for wasted thinking). Implemented in
+  `cerebra/dermarena/llm.py` (`OpenRouterMLLM.chat` retry-on-empty).
+- **Verify intermediates, not just the final output** — inspect the trace
+  (`show_trace.py`): if PROPOSE/experts are blank but the final answer is populated,
+  the reasoning is being thrown away. A green final result can hide empty steps.
+- **Cost-check** — thinking is ~10-40x the tokens; confirm the budget cap still holds
+  (`DERMARENA_BUDGET_USD` / the ledger) before a full run.
+
+Sampling params for thinking vs non-thinking differ — use the matching preset per the
+FM-docs rule above (Qwen3.5-27B thinking = temp 1.0/top_p 0.95; nonthinking = temp 0.7/top_p 0.8).
+
 ## Other essentials
 - **Env for running FMs:** `/fs04/scratch2/ub62/ssim0070/dermagent/bin/python`
   (torch 2.9.1+cu128, transformers 4.57.6). The login-node `~/.local` torch is broken.
