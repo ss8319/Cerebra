@@ -53,14 +53,22 @@ A lean per-case pipeline (NOT Cerebra's legacy dynamic orchestrator):
 3. **Transient OpenRouter non-JSON response** killed the whole GPU job. Fix: retry-with-backoff
    in `llm.py` + per-case isolation in `pipeline.py` + resilient sbatch.
 4. **prediction emitted as a list** → would score 0. Fix: `_format_prediction` → grader string.
+5. **[2026-07-03] Grader judge model invalid** — score_dx's default judge
+   `google/gemini-3-flash` is NOT a valid OpenRouter id (400) → `judge_response=null` →
+   EVERYTHING scores 0, even exact matches. Fix: pass `--model google/gemini-2.5-flash`
+   (locked into sbatch, commit 69e1c08). **Always set a valid judge model when grading.**
 
-## 5. What's validated
+## 5. What's validated  [UPDATED 2026-07-03]
 - ✅ Pipeline CPU/API path (classify, propose, debate, both task heads, grader-format output).
 - ✅ **Vision path on GPU (L40S)** — classifier split schematic vs clinical_photo per image;
-  PanDerm re-ranked candidates (SCLE @0.90); strong prediction (GT "Drug-induced SCLE" →
-  pred #1 "Erlotinib-induced SCLE"). This was the "use the image tools" run.
-- ⏳ Full n=1 grade across all 3 tasks: **job 58077821 was PENDING at session end** — check it
-  tomorrow (`squeue -j 58077821`; results under `cerebra_cache/dermarena/n1_validate/`).
+  PanDerm re-ranked candidates (SCLE @0.90).
+- ✅ **Full n=1 GPU run COMPLETE (job 58077821, overnight, $0.21).** Real grades (after the
+  judge fix above):
+  - **RDS → EXACT HIT (top1=2/2)** — GT "Drug-induced SCLE" = our pred #1.
+  - **RDC → miss** — GT *Kaposi Sarcoma*, not in top-5 (genuinely hard).
+  - **DxTest → miss (P/R/F1=0)** — GT wanted biopsy/IHC; we suggested CT/MRI imaging.
+  → Agent + vision + pipeline + grading all validated end-to-end: 1 clean hit + 2 real misses.
+  Results: `cerebra_cache/dermarena/n1_validate/` (`*_regrade2/` has the correctly-judged rds/rdc).
 
 ## 6. OPEN — decide/act tomorrow
 - **Dynamic debate panel (APPROVED, not yet built).** Current debate = 3 hardcoded personas
@@ -83,8 +91,9 @@ A lean per-case pipeline (NOT Cerebra's legacy dynamic orchestrator):
 - **Budget:** ledger at `cerebra_cache/dermarena/ledger.json`, cap `$DERMARENA_BUDGET_USD` ($10).
 - **Grader ledger:** always `export LLM_LEDGER_PATH=<writable>` (not /mnt/hdd).
 
-## 8. Suggested first moves tomorrow
-1. `squeue -j 58077821` → if done, read grades + `render_traces` the 3 cases.
-2. Build the dynamic debate panel (`panel.py` + edits) per `debate_redesign.html`.
-3. Fix the candidate-preamble parse nit.
-4. Then: 3-system benchmark harness on dev500 (bare Qwen-27B vs DermAgent vs Our Agent).
+## 8. Next moves  [UPDATED 2026-07-03 — n=1 done, judge fixed]
+1. ~~check job 58077821~~ ✅ done — validated (see §5).
+2. Build the dynamic debate panel (`panel.py` + edits) per `debate_redesign.html`.  ← NEXT
+3. Fix the candidate-preamble parse nit in `_parse_candidates`.
+4. Then: 3-system benchmark harness on dev500 (bare Qwen-27B vs DermAgent vs Our Agent) —
+   remember `--model google/gemini-2.5-flash` for score_dx grading.
