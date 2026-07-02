@@ -37,6 +37,31 @@ def _esc(s: Any) -> str:
     return html.escape(str(s if s is not None else ""))
 
 
+# Prompt templates, imported from the pipeline modules so the viewer shows exactly
+# what each stage asks the model (works on any predictions file, no re-run needed).
+from cerebra.dermarena import classify as _classify, propose as _propose, debate as _debate
+
+
+def _prompt_details(label: str, pairs: List[tuple]) -> str:
+    """pairs = [(sublabel, text), ...] rendered as SYSTEM/USER blocks in a <details>."""
+    inner = "".join(f'<div class=pl>{_esc(sl)}</div><pre>{_esc(t)}</pre>' for sl, t in pairs)
+    return f'<details class=prompt><summary>▸ prompt · {_esc(label)}</summary>{inner}</details>'
+
+
+def _debate_prompt(task: str) -> str:
+    pairs = []
+    for role, persona in _debate.EXPERTS:
+        pairs.append((f"{role} — SYSTEM", persona))
+    pairs.append(("expert — USER (template)", _debate.EXPERT_ASK))
+    try:
+        ti = _debate._task_instruction(task)
+    except Exception:
+        ti = ""
+    pairs.append(("moderator — SYSTEM", _debate.MODERATOR_SYSTEM))
+    pairs.append(("moderator — USER (template)", _debate.MODERATOR_ASK.format(task_instruction=ti)))
+    return _prompt_details("debate (experts + moderator)", pairs)
+
+
 def _case_images(rec: Dict[str, Any]) -> List[Dict[str, str]]:
     """Collect {path, modality} for the case from classified_modality + findings."""
     out, seen = [], set()
@@ -101,13 +126,19 @@ def _render_case(rec: Dict[str, Any]) -> str:
   </div>
   {gt_line}
   <div class=cols>
-    <div class=left><h4>Step 1 · images + classified modality</h4>{''.join(imgs_html)}
+    <div class=left><h4>Step 1 · images + classified modality</h4>
+      {_prompt_details("Step 1 modality classifier", [("SYSTEM", _classify.SYSTEM), ("USER", _classify.USER)])}
+      {''.join(imgs_html)}
       <div class=routing>{_esc(tr.get("plan_routing"))}</div>
     </div>
     <div class=right>
-      <h4>Step 2 · PROPOSE candidates</h4><ol class=cands>{cands}</ol>
+      <h4>Step 2 · PROPOSE candidates</h4>
+      {_prompt_details("Step 2 candidate proposer", [("SYSTEM", _propose.SYSTEM_PROMPT), ("USER (template)", _propose.USER_TEMPLATE)])}
+      <ol class=cands>{cands}</ol>
       <h4>Step 3 · RUN findings</h4>{find_html}
-      <h4>Step 4 · DEBATE</h4>{experts or '<div class=empty>(no experts)</div>'}
+      <h4>Step 4 · DEBATE</h4>
+      {_debate_prompt(task)}
+      {experts or '<div class=empty>(no experts)</div>'}
       {raw_blocks}
       <h4>Final prediction</h4><pre class=pred>{_esc(rec.get("prediction"))}</pre>
     </div>
@@ -143,6 +174,9 @@ ol.cands{margin:0;padding-left:20px}ol.cands li{margin:2px 0}
 pre{white-space:pre-wrap;word-break:break-word;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px;font-size:12px}
 pre.pred{border-color:#238636;background:#0d1a12;color:#7ee787}
 details{margin:6px 0}summary{cursor:pointer;color:#8b949e;font-size:12px}
+details.prompt{margin:4px 0 10px;background:#0d1117;border:1px dashed #30363d;border-radius:6px;padding:4px 8px}
+details.prompt summary{color:#d2a8ff}
+.pl{color:#6e7681;font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin:6px 0 2px}
 """
 
 

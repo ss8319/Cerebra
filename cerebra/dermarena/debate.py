@@ -20,6 +20,14 @@ EXPERTS = [
     ("Internist", "You are a general internist alert to systemic, infectious, and rare (Orphanet) causes."),
 ]
 
+# Prompt templates (exposed so the trace viewer can show what each stage asks).
+EXPERT_ASK = ("As the {role}, give your single most likely diagnosis (or, for a test-selection "
+              "task, the key test to order) and a 2-3 sentence justification grounded in the "
+              "evidence above.")
+MODERATOR_SYSTEM = ("You are the moderator of an expert diagnostic panel. Weigh image findings as "
+                    "support/refutation of candidates; do not let a single tool override strong consensus.")
+MODERATOR_ASK = "Synthesize the panel and the evidence into the final answer. {task_instruction}"
+
 
 def _evidence_block(case: Case, candidates: List[str], findings: List[Dict[str, Any]]) -> str:
     parts = [case.context_text()]
@@ -84,9 +92,7 @@ def debate(
     total_cost = 0.0
     opinions: List[Dict[str, str]] = []
     for role, persona in experts:
-        prompt = (f"{evidence}\n\nAs the {role}, give your single most likely diagnosis (or, for "
-                  f"a test-selection task, the key test to order) and a 2-3 sentence justification "
-                  f"grounded in the evidence above.")
+        prompt = f"{evidence}\n\n{EXPERT_ASK.format(role=role)}"
         r = mllm.chat(system=persona, text=prompt, max_tokens=max_tokens)
         total_cost = r.cumulative_usd
         opinions.append({"role": role, "opinion": r.text.strip()})
@@ -104,13 +110,9 @@ def debate(
 
     # Moderator synthesis -> task-formatted answer.
     panel = "\n\n".join(f"{o['role']}: {o['opinion']}" for o in opinions)
-    mod_prompt = (f"{evidence}\n\nEXPERT PANEL:\n{panel}\n\nSynthesize the panel and the evidence "
-                  f"into the final answer. {_task_instruction(case.task)}")
-    mod = mllm.chat(
-        system="You are the moderator of an expert diagnostic panel. Weigh image findings as "
-               "support/refutation of candidates; do not let a single tool override strong consensus.",
-        text=mod_prompt, max_tokens=max_tokens,
-    )
+    mod_prompt = (f"{evidence}\n\nEXPERT PANEL:\n{panel}\n\n"
+                  f"{MODERATOR_ASK.format(task_instruction=_task_instruction(case.task))}")
+    mod = mllm.chat(system=MODERATOR_SYSTEM, text=mod_prompt, max_tokens=max_tokens)
     prediction = _parse_final(case.task, mod.text)
 
     return {
