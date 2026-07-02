@@ -56,9 +56,11 @@ done
 # ── 2. Grade ────────────────────────────────────────────────────────────────
 echo "=================== GRADE rds/rdc (score_dx.py, +hypernyms) ==================="
 for TASK in rds rdc; do
+  # NOTE: grader default judge `google/gemini-3-flash` is NOT a valid OpenRouter id
+  # (returns null → everything scores 0). Use a valid judge.
   $PY "$EVAL/score_dx.py" --benchmark "$OUT/${TASK}_bench1.jsonl" \
       --predictions "$OUT/${TASK}_pred.jsonl" --output-dir "$OUT/${TASK}_grade" \
-      --hypernyms "$HYP" || echo "[warn] score_dx $TASK failed"
+      --hypernyms "$HYP" --model google/gemini-2.5-flash || echo "[warn] score_dx $TASK failed"
 done
 
 echo "=================== GRADE dxtest (grade_dxtest.py) ==================="
