@@ -6,6 +6,18 @@ _High-level working doc. Last updated: 2026-07-02._
 Build an **agentic diagnostic system on the Cerebra scaffold** that solves the
 DermArena dx-track, and beats the DermAgent + MedAgent-Pro baselines.
 
+### MAIN GOAL — benchmark matrix (set 2026-07-02)
+On DermArena dx_v2 (3 tasks), compare three systems with the **backbone held constant**
+so the difference is purely the agent scaffold:
+| System | Backbone |
+|---|---|
+| Qwen3.5-27B **bare** (single call) | qwen/qwen3.5-27b |
+| **DermAgent** | qwen/qwen3.5-27b |
+| **Our Agent** (Cerebra dermarena) | qwen/qwen3.5-27b |
+Then extend by **varying the backbone**: add **Qwen3.5-9B** and **GPT-5**.
+Eval = (system) × (backbone). Fair-comparison rule: same model, same dev set, same grader.
+Prereq: regenerate `dev300` as a **stratified** representative sample first.
+
 Cerebra already gives us a two-tier architecture (orchestrator `SuperAgent` →
 specialist agents → `SummaryAgent` fusion) with planner/executor/memory loops.
 We **keep the scaffold, swap the modality agents** for dermatology image agents.
