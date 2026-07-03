@@ -44,6 +44,45 @@ def _prompt_details(label: str, pairs: List[tuple]) -> str:
     return f'<details class=prompt><summary>&#9656; prompt · {_esc(label)}</summary>{inner}</details>'
 
 
+# Per-tool prompts (verbatim mirror of the tool modules — the tools import torch, too
+# heavy to import here). Shown in the findings so each tool's trace is self-explanatory.
+_DERMOGPT_SYSTEM = """You are DermoGPT, a versatile expert AI dermatologist and pathologist. You are capable of analyzing skin lesions across different imaging modalities, including standard clinical photography (macroscopic) and dermoscopy.
+
+### Core Capabilities & Protocol
+1. Modality Recognition: identify Clinical (naked eye) vs Dermoscopy (magnified, polarized).
+2. Adaptive Morphological Analysis (ABCD for clinical; pigment networks/globules/streaks for dermoscopy).
+3. Diagnostic Logic: select the single most probable diagnosis from the provided options.
+
+### Operational Constraints
+- Strict XML Output: response ENTIRELY within <reasoning> and <final_diagnosis> tags.
+- Closed-Set: choose STRICTLY from the provided candidate_diseases list."""
+
+_DERMOGPT_USER = """Analyze the provided skin lesion image and determine the most likely diagnosis.
+You are strictly limited to the following diagnostic options: {candidate_diseases}
+... (steps: modality ID -> morphological decoding -> diagnostic synthesis) ->
+<reasoning>...</reasoning>
+<final_diagnosis>[exact option from the list]</final_diagnosis>"""
+
+_MEDGEMMA_SYSTEM = ("You are an expert dermatologist and dermatopathologist analyzing medical images "
+                    "from a case report. The image may be a clinical photograph, dermoscopy, "
+                    "histopathology, immunohistochemistry, radiology, or other modality. Describe ONLY "
+                    "what is visible: lesion morphology, distribution, colour, borders, and modality-specific "
+                    "features. Then give a short ranked differential. Be precise; do NOT invent history not shown.")
+
+TOOL_PROMPTS = {
+    "panderm": [
+        ("MODE", "CLIP zero-shot classifier — NO LLM. For each of the top-10 candidate diseases, "
+                 "these text templates are encoded and the image is ranked by cosine similarity."),
+        ("TEMPLATES  ({} = candidate disease)",
+         "This is a skin image of {}\na dermoscopy image of {}\na clinical photo of {}\na skin lesion of {}"),
+    ],
+    "dermogpt": [("SYSTEM", _DERMOGPT_SYSTEM),
+                 ("USER (template · {candidate_diseases} = the top-10)", _DERMOGPT_USER)],
+    "medgemma": [("SYSTEM", _MEDGEMMA_SYSTEM),
+                 ("USER (query)", "Describe the visual findings and give a ranked differential diagnosis.")],
+}
+
+
 def _images_html(rec: Dict[str, Any]) -> str:
     figs = []
     for path, mod in (rec.get("case_images") or {}).items():
@@ -67,13 +106,21 @@ def _render_case(rec: Dict[str, Any]) -> str:
     if not calls:
         calls = "<div class=empty>(no tools selected — verify from narrative)</div>"
 
-    # Step 2 — findings
-    finds = ""
+    # Step 2 — findings, grouped by tool with each tool's own prompt dropdown
+    from collections import OrderedDict
+    by_tool: "OrderedDict[str, list]" = OrderedDict()
     for f in (tr.get("findings") or []):
-        body = f.get("summary") or f.get("error") or ""
-        fd = f' <span class=fdx>→ {_esc(f.get("final_diagnosis"))}</span>' if f.get("final_diagnosis") else ""
-        finds += (f'<div class=finding><div class=tool>{_esc(f.get("tool"))}{fd}</div>'
-                  f'<div class=body>{_esc(str(body))}</div></div>')
+        by_tool.setdefault(f.get("tool"), []).append(f)
+    finds = ""
+    for tool, fs in by_tool.items():
+        pd = _prompt_details(f"{tool} prompt", TOOL_PROMPTS[tool]) if tool in TOOL_PROMPTS else ""
+        block = ""
+        for f in fs:
+            body = f.get("summary") or f.get("error") or ""
+            fd = f' <span class=fdx>→ {_esc(f.get("final_diagnosis"))}</span>' if f.get("final_diagnosis") else ""
+            img = f' <span class=fn>{_esc(os.path.basename(f["image_path"]))}</span>' if f.get("image_path") else ""
+            block += f'<div class=body>{fd}{img}<br>{_esc(str(body))}</div>'
+        finds += f'<div class=finding><div class=tool>{_esc(tool)}</div>{pd}{block}</div>'
     if not finds:
         finds = "<div class=empty>(no tool findings — tools skipped or none selected)</div>"
 
