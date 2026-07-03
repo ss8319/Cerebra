@@ -17,32 +17,23 @@
 set -euo pipefail
 
 CEREBRA=/fs04/scratch2/ub62/ssim0070/Cerebra
-EVAL=/fs04/scratch2/ub62/ssim0070/DermArena/dataset_collection/eval
-DATA=/fs04/scratch2/ub62/ssim0070/dermarena_dx_v2
-declare -A DEV=(
-  [rds]="$DATA/stratified/MM_RDS_benchmark_dev500.jsonl"
-  [rdc]="$DATA/stratified/MM_RDC_benchmark_dev500.jsonl"
-  [dxtest]="$DATA/stratified/DxTest_benchmark_dev500.jsonl"
-)
-HYP=/fs04/scratch2/ub62/ssim0070/DermArena/dataset_collection/data/benchmark/icd11_hypernym.json
-PY=/fs04/scratch2/ub62/ssim0070/dermagent/bin/python
-OUT=$CEREBRA/cerebra_cache/dermarena/n1_validate
-mkdir -p "$OUT" "$CEREBRA/slurm/logs"
+source "$CEREBRA/slurm/env.sh"          # single source of truth for ALL paths/keys
+export PYTHONPATH="$CEREBRA"
+OUT="$CEREBRA/cerebra_cache/dermarena/n1_validate"
+rm -rf "$OUT"; mkdir -p "$OUT" "$CEREBRA/slurm/logs"   # clean → no stale-file / resume gotchas
 
-# Local weights (no HF download) + OpenRouter for base MLLM/judge (needs internet).
-export HF_HOME=/fs04/scratch2/ub62/ssim0070/.hf_cache
-export HF_HUB_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
-export PYTHONPATH=$CEREBRA
-export DERMARENA_BUDGET_USD=10
-export OPENROUTER_API_KEY=$(grep -m1 '^OPENROUTER_API_KEY=' /fs04/scratch2/ub62/ssim0070/DermArena_data/.env | cut -d= -f2)
-# Graders' judge-client writes a ledger; its default /mnt/hdd doesn't exist on M3 -> set it.
-export LLM_LEDGER_PATH="$OUT/llm_ledger.jsonl"
+declare -A DEV=(
+  [rds]="$DERMARENA_DATA/stratified/MM_RDS_benchmark_dev500.jsonl"
+  [rdc]="$DERMARENA_DATA/stratified/MM_RDC_benchmark_dev500.jsonl"
+  [dxtest]="$DERMARENA_DATA/stratified/DxTest_benchmark_dev500.jsonl"
+)
+
+# ── PREFLIGHT: fail loud before wasting the GPU on a broken setup ────────────
+echo "=================== PREFLIGHT ==================="
+"$PY" -m cerebra.dermarena.preflight || { echo "PREFLIGHT FAILED — aborting run."; exit 1; }
 
 echo "[gpu] $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader)"
 cd "$CEREBRA"
-
-declare -A BENCH=( [rds]="$DATA/MM_RDS_benchmark.jsonl" [rdc]="$DATA/MM_RDC_benchmark.jsonl" [dxtest]="$DATA/DxTest_benchmark.jsonl" )
 
 # ── 1. Run the full pipeline, n=1 per task ──────────────────────────────────
 for TASK in rds rdc dxtest; do
@@ -56,15 +47,14 @@ done
 # ── 2. Grade ────────────────────────────────────────────────────────────────
 echo "=================== GRADE rds/rdc (score_dx.py, +hypernyms) ==================="
 for TASK in rds rdc; do
-  # NOTE: grader default judge `google/gemini-3-flash` is NOT a valid OpenRouter id
-  # (returns null → everything scores 0). Use a valid judge.
-  $PY "$EVAL/score_dx.py" --benchmark "$OUT/${TASK}_bench1.jsonl" \
+  # judge = $DERMARENA_JUDGE_MODEL (gemini-2.5-flash) — NOT the invalid default gemini-3-flash.
+  "$PY" "$DERMARENA_EVAL/score_dx.py" --benchmark "$OUT/${TASK}_bench1.jsonl" \
       --predictions "$OUT/${TASK}_pred.jsonl" --output-dir "$OUT/${TASK}_grade" \
-      --hypernyms "$HYP" --model google/gemini-2.5-flash || echo "[warn] score_dx $TASK failed"
+      --hypernyms "$DERMARENA_HYPERNYMS" --model "$DERMARENA_JUDGE_MODEL" || echo "[warn] score_dx $TASK failed"
 done
 
 echo "=================== GRADE dxtest (grade_dxtest.py) ==================="
-$PY "$EVAL/grade_dxtest.py" --benchmark "$OUT/dxtest_bench1.jsonl" \
+"$PY" "$DERMARENA_EVAL/grade_dxtest.py" --benchmark "$OUT/dxtest_bench1.jsonl" \
     --predictions "$OUT/dxtest_pred.jsonl" --output-dir "$OUT/dxtest_grade" \
     || echo "[warn] grade_dxtest failed"
 

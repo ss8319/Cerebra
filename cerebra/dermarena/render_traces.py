@@ -177,6 +177,47 @@ details{margin:6px 0}summary{cursor:pointer;color:#8b949e;font-size:12px}
 details.prompt{margin:4px 0 10px;background:#0d1117;border:1px dashed #30363d;border-radius:6px;padding:4px 8px}
 details.prompt summary{color:#d2a8ff}
 .pl{color:#6e7681;font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin:6px 0 2px}
+.setup{margin:16px 20px;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px 20px}
+.setup h2{margin:0 0 8px;font-size:15px;color:#58a6ff}
+.setup h3{margin:14px 0 6px;font-size:12px;color:#d2a8ff;text-transform:uppercase;letter-spacing:.04em}
+.setup p{color:#c9d1d9;font-size:13px}
+.setup table{border-collapse:collapse;width:100%;font-size:12.5px;margin:6px 0}
+.setup td,.setup th{border:1px solid #30363d;padding:6px 9px;text-align:left}
+.setup th{background:#1c2128;color:#adbac7}
+.setup .flow{font-family:monospace;font-size:12px;white-space:pre;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;color:#adbac7;overflow:auto}
+.setup code{background:#0d1117;padding:1px 5px;border-radius:4px;color:#7ee787}
+.setup .star{color:#f0883e;font-weight:600}
+"""
+
+SETUP_HTML = """
+<div class=setup>
+<h2>🧠 How this pipeline works — read before the cases</h2>
+<p>A lean per-case pipeline for the DermArena dx-track (staying on the Cerebra repo). Key idea:
+the diagnosis is built from <b>vision + fusion</b> — the shown narrative has its image
+descriptions removed, so findings must come from the images. Only two steps call an LLM (<span class=star>★</span>);
+the rest is deterministic.</p>
+<div class=flow>0 LOAD      case row -> masked report + images (+ examination results for RDC)
+1 ANALYSE   classify EACH image's modality with the base MLLM (we do NOT trust the dataset label) -> route
+2 PROPOSE <span class=star>*</span> base MLLM sees images + report -> candidate diagnoses
+3 RUN       clinical_photo / dermoscopy -> PanDerm (re-ranks the candidates) + DermoGPT
+            everything else / unknown   -> MedGemma
+4 DEBATE  <span class=star>*</span> 3-expert panel + moderator fuse candidates + tool findings + narrative
+            -> RDS/RDC: ranked top-5 diagnosis ; DxTest: test(s) to order
+5 EMIT      prediction string (graded by ICD-11 hypernym match + an LLM judge)</div>
+<h3>Models used</h3>
+<table>
+<tr><th>Role</th><th>Model</th><th>Steps</th></tr>
+<tr><td>Base MLLM (classify / propose / debate)</td><td>qwen/qwen3.5-27b via OpenRouter (no-think for dev)</td><td>1, 2, 4</td></tr>
+<tr><td>Clinical &amp; dermoscopy specialist</td><td>PanDerm (DermLIP zero-shot) + DermoGPT-RL (Qwen3-VL-8B)</td><td>3</td></tr>
+<tr><td>Other / unknown modality</td><td>MedGemma-1.5-4b-it</td><td>3</td></tr>
+<tr><td>Grader judge</td><td>google/gemini-2.5-flash + ICD-11 hypernym map</td><td>eval</td></tr>
+</table>
+<h3>How to read each case</h3>
+<p><b>Left column</b> = the images with the modality the classifier assigned (Step 1).
+<b>Right column</b> = the agentic chain: Step 2 candidates -> Step 3 what each vision tool
+reported -> Step 4 the expert debate -> the final prediction vs the ground truth.
+Click <span class=star>&#9656; prompt</span> under any step to see the exact prompt that was sent.</p>
+</div>
 """
 
 
@@ -198,8 +239,9 @@ def main():
     cards = "".join(_render_case(r) for r in recs)
     doc = f"""<!doctype html><html><head><meta charset=utf-8>
 <title>DermArena agent traces</title><style>{CSS}</style></head><body>
-<header><h1>DermArena agent — trace viewer</h1>
-<div class=sub>{len(recs)} case(s) · sources: {_esc(', '.join(os.path.basename(p) for p in args.preds))}</div></header>
+<header><h1>DermArena agent — trace viewer (qualitative)</h1>
+<div class=sub>{len(recs)} case(s) · Cerebra pipeline · sources: {_esc(', '.join(os.path.basename(p) for p in args.preds))}</div></header>
+{SETUP_HTML}
 {cards}</body></html>"""
     with open(args.out, "w") as f:
         f.write(doc)
