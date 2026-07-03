@@ -10,14 +10,27 @@ The worker writes predictions to "out" then touches "<out>.done".
 Stop with:  touch $CEREBRA_REQ_DIR/STOP   (or scancel the job).
 """
 import glob
+import importlib
 import json
 import os
 import time
 import traceback
 
 from cerebra.dermarena.case import load_cases
-from cerebra.dermarena.pipeline import run_case
 from cerebra.dermarena.llm import OpenRouterMLLM
+import cerebra.dermarena.select as _sel
+import cerebra.dermarena.candidates as _cand
+import cerebra.dermarena.verify as _ver
+import cerebra.dermarena.pipeline as _pipe
+
+
+def _reload_prompts():
+    """Hot-reload the pure-Python step modules so PROMPT edits (select/candidates/verify)
+    take effect on the next request WITHOUT reloading the GPU tools. run.py (torch tools)
+    is imported lazily inside run_case and stays cached → tools remain warm."""
+    for m in (_sel, _cand, _ver, _pipe):
+        importlib.reload(m)
+    return _pipe.run_case
 
 REQ_DIR = os.environ.get("CEREBRA_REQ_DIR",
                          "/fs04/scratch2/ub62/ssim0070/Cerebra/cerebra_cache/dermarena/warm/requests")
@@ -44,6 +57,7 @@ while True:
         continue
     os.remove(req_path)  # claim it
 
+    run_case = _reload_prompts()  # pick up any prompt edits (tools stay warm)
     mllm = OpenRouterMLLM(thinking=bool(req.get("thinking", False)))
     out = req["out"]
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)

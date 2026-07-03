@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=cerebra-warm
-#SBATCH --partition=gpu
-#SBATCH --qos=normal
-#SBATCH --gres=gpu:L40S:1
+#SBATCH --partition=m3h
+#SBATCH --qos=m3h
+#SBATCH --gres=gpu:H100:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=12:00:00
+#SBATCH --time=48:00:00
 #SBATCH --output=/fs04/scratch2/ub62/ssim0070/Cerebra/slurm/logs/cerebra-warm-%j.out
 #SBATCH --error=/fs04/scratch2/ub62/ssim0070/Cerebra/slurm/logs/cerebra-warm-%j.err
 
