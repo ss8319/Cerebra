@@ -1,9 +1,14 @@
-"""End-to-end DermArena agent pipeline: LOAD -> ANALYSE -> PROPOSE -> RUN -> DEBATE -> EMIT.
+"""DermArena agent pipeline — simplified SELECT -> EXECUTE -> VERIFY(confirm|rerun).
+
+  Step 1 SELECT : Qwen sees case + images + tables -> chooses which tools to run.
+  Step 2 EXECUTE: run the selected tools (max 2 retries per tool).
+  Step 3 VERIFY : Qwen sees case + tool outputs -> CONFIRM (emit dx / test) or RERUN one
+                  tool (max 1 rerun of the loop). EMIT the prediction string.
 
 CLI:
     PY=/fs04/scratch2/ub62/ssim0070/dermagent/bin/python
     PYTHONPATH=. $PY -m cerebra.dermarena.pipeline --task rds --limit 5 --out preds.jsonl
-    # add --no-run to skip GPU vision tools (debate over narrative + candidates only)
+    # --no-run skips the GPU tools (verify straight from the narrative)
 """
 from __future__ import annotations
 
@@ -12,9 +17,8 @@ import json
 from typing import Any, Dict, List, Optional
 
 from cerebra.dermarena.case import Case, load_cases
-from cerebra.dermarena.analyse import build_plan
-from cerebra.dermarena.propose import propose_candidates
-from cerebra.dermarena.debate import debate
+from cerebra.dermarena.select import select_tools
+from cerebra.dermarena.verify import verify_or_rerun
 from cerebra.dermarena.llm import OpenRouterMLLM
 
 
@@ -37,47 +41,61 @@ def run_case(
     mllm: OpenRouterMLLM,
     tools: Optional[Dict[str, Any]] = None,
     do_run: bool = True,
-    revise: bool = False,
-    classify: bool = True,
+    max_rerun: int = 1,
 ) -> Dict[str, Any]:
-    # Step 1: classify modality (don't trust the dataset label), then route on it.
-    modality_by_path = None
-    if classify and case.has_images:
-        from cerebra.dermarena.classify import classify_case
-        # non-thinking client (perception task), shares the ledger for budget accounting
-        classify_mllm = OpenRouterMLLM(thinking=False, ledger=mllm.ledger)
-        modality_by_path = classify_case(case, mllm=classify_mllm)
-    plan = build_plan(case, modality_by_path=modality_by_path)
-    proposal = propose_candidates(case, mllm=mllm)
-    candidates = proposal["candidates"]
+    # Step 1 — SELECT: Qwen chooses which tools to run on which images.
+    sel = select_tools(case, mllm=mllm)
+    present = sel["present_images"]
 
+    # Step 2 + 3 — EXECUTE selected tools, then VERIFY (confirm | rerun ≤ max_rerun).
     findings: List[Dict[str, Any]] = []
-    if do_run and plan["tool_calls"]:
-        from cerebra.dermarena.run import run_plan  # lazy: pulls torch only when needed
-        findings = run_plan(case, plan, candidates, tools=tools)
+    rerun_log: List[Dict[str, Any]] = []
+    verify: Dict[str, Any] = {}
+    rerun_count = 0
 
-    result = debate(case, candidates, findings, mllm=mllm, revise=revise)
+    if do_run and sel["tool_calls"]:
+        from cerebra.dermarena.run import run_calls  # lazy: pulls torch only on the GPU
+        findings = run_calls(case, sel["tool_calls"], tools=tools, max_retries=2)
+
+    while True:
+        verify = verify_or_rerun(case, findings, present, mllm=mllm,
+                                 force_confirm=(rerun_count >= max_rerun))
+        if verify["action"] == "rerun" and rerun_count < max_rerun and verify.get("rerun") and do_run:
+            rr = verify["rerun"]
+            idxs = rr.get("image_indices") or []
+            paths = [present[i]["abs_path"] for i in idxs if isinstance(i, int) and 0 <= i < len(present)]
+            call = {"tool": str(rr.get("tool", "")).strip().lower(),
+                    "image_paths": paths or [im["abs_path"] for im in present],
+                    "candidate_diseases": rr.get("candidate_diseases") or []}
+            from cerebra.dermarena.run import run_calls
+            findings += run_calls(case, [call], tools=tools, max_retries=2)
+            rerun_log.append({"why": rr.get("why"), "call": call})
+            rerun_count += 1
+            continue
+        break
+
+    answer = verify.get("tests") if case.task == "dxtest" else verify.get("diagnoses")
     return {
         "_id": case.id,
         "task": case.task,
-        # grader-facing field: a single formatted string
-        "prediction": _format_prediction(case.task, result["prediction"]),
-        # structured copy for our own analysis (ignored by grader)
-        "prediction_list": result["prediction"],
-        "candidates": candidates,
+        "prediction": _format_prediction(case.task, answer or []),
+        "prediction_list": answer or [],
         "n_findings": len(findings),
+        "rerun_count": rerun_count,
         "ground_truth": case.ground_truth.get("diagnosis"),
         "diagnostic_test_gt": case.ground_truth.get("diagnostic_test_gt"),
-        "classified_modality": modality_by_path,
+        # image paths + selected modality-hint, kept for the trace viewer's image panel
+        "case_images": {im["abs_path"]: im.get("modality") for im in present},
         "trace": {
-            "plan_routing": plan["routing"],
-            "used_classified_modality": plan["used_classified_modality"],
-            "propose_raw": proposal.get("raw_response"),
+            "select_reasoning": sel.get("reasoning"),
+            "select_raw": sel.get("raw"),
+            "tool_calls": sel["tool_calls"],
             "findings": findings,
-            "expert_opinions": result["expert_opinions"],
-            "moderator_raw": result["moderator_raw"],
+            "verify_action": verify.get("action"),
+            "verify_raw": verify.get("raw"),
+            "rerun_log": rerun_log,
         },
-        "cumulative_usd": result["usage"]["cumulative_usd"],
+        "cumulative_usd": verify.get("usage", {}).get("cumulative_usd", 0.0),
     }
 
 
@@ -87,10 +105,7 @@ def main():
     ap.add_argument("--limit", type=int, default=5)
     ap.add_argument("--jsonl", default=None, help="explicit input JSONL (e.g. dev subset)")
     ap.add_argument("--out", default="dermarena_preds.jsonl")
-    ap.add_argument("--no-run", action="store_true", help="skip GPU vision tools (debate only)")
-    ap.add_argument("--no-classify", action="store_true",
-                    help="trust the dataset modality label instead of re-classifying (Step 1 off)")
-    ap.add_argument("--revise", action="store_true", help="add a debate revision round")
+    ap.add_argument("--no-run", action="store_true", help="skip GPU vision tools (verify from narrative only)")
     ap.add_argument("--thinking", action="store_true",
                     help="run Qwen3.5-27B with reasoning ON (HF thinking params + 3k token "
                          "budget). Better quality, ~13x cost — watch the $10 ledger cap.")
@@ -113,13 +128,12 @@ def main():
     def _work(c):
         # Never let one case abort a long run — record the error and continue.
         try:
-            return run_case(c, mllm, tools=tools, do_run=not args.no_run, revise=args.revise,
-                            classify=not args.no_classify)
+            return run_case(c, mllm, tools=tools, do_run=not args.no_run)
         except Exception as e:
             import traceback
             traceback.print_exc()
             return {"_id": c.id, "task": c.task, "prediction": "", "prediction_list": [],
-                    "error": f"{type(e).__name__}: {e}", "candidates": [], "n_findings": 0,
+                    "error": f"{type(e).__name__}: {e}", "n_findings": 0,
                     "ground_truth": c.ground_truth.get("diagnosis"),
                     "diagnostic_test_gt": c.ground_truth.get("diagnostic_test_gt"),
                     "cumulative_usd": mllm.ledger.spent()}

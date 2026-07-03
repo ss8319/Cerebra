@@ -17,6 +17,13 @@ TOOL_IMPORTS = {
     "MedGemmaDermAnalyzerTool": ("cerebra.tools.image_agent.medgemma_derm_analyzer.tool", "MedGemmaDermAnalyzerTool"),
 }
 
+# Short names the SELECT step uses -> tool classes.
+SHORT_TO_CLASS = {
+    "panderm": "PanDermClassifierTool",
+    "dermogpt": "DermoGPTVQATool",
+    "medgemma": "MedGemmaDermAnalyzerTool",
+}
+
 
 def _get_tool(name: str, cache: Dict[str, Any]):
     if name not in cache:
@@ -83,4 +90,45 @@ def run_plan(
         except Exception as e:  # a tool failure must not kill the case
             findings.append({"tool": name, "image_path": None, "summary": f"[{name} error: {e}]"})
 
+    return findings
+
+
+def run_calls(case: Case, tool_calls: List[Dict[str, Any]],
+              tools: Optional[Dict[str, Any]] = None, max_retries: int = 2) -> List[Dict[str, Any]]:
+    """Execute Qwen-SELECTED tool calls, with up to `max_retries` retries per tool (Step 2).
+
+    tool_calls: [{"tool": <short>, "image_paths": [...], "candidate_diseases": [...]}]
+    """
+    tools = tools if tools is not None else {}
+    findings: List[Dict[str, Any]] = []
+    for tc in tool_calls:
+        short = tc.get("tool")
+        cls_name = SHORT_TO_CLASS.get(short)
+        if not cls_name:
+            findings.append({"tool": short, "summary": None, "error": f"unknown tool '{short}'"})
+            continue
+        tool = _get_tool(cls_name, tools)
+        paths = tc.get("image_paths") or []
+        cand = ", ".join(tc.get("candidate_diseases") or []) or None
+        last_err = None
+        for attempt in range(max_retries + 1):  # 1 try + up to max_retries
+            try:
+                if short == "panderm":
+                    ds = tool.execute(image_paths=paths, candidate_diseases=cand)
+                elif short == "dermogpt":
+                    ds = (tool.execute(image_paths=paths, candidate_diseases=cand) if cand
+                          else tool.execute(image_paths=paths, query="Describe the lesion and give a differential."))
+                else:  # medgemma
+                    ds = tool.execute(image_paths=paths, case_context=case.context_text()[:2000])
+                for fnd in _normalize(cls_name, ds):
+                    fnd["tool"] = short                         # short name in the trace
+                    fnd["candidate_diseases"] = tc.get("candidate_diseases") or []
+                    findings.append(fnd)
+                last_err = None
+                break
+            except Exception as e:  # noqa: BLE001
+                last_err = str(e)
+        if last_err is not None:
+            findings.append({"tool": short, "image_path": None, "summary": None,
+                             "error": f"[{short} failed after {max_retries} retries: {last_err}]"})
     return findings
