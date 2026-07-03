@@ -74,6 +74,15 @@ request file; no re-queue, no reload.
 Caveat: a long walltime is harder to backfill on a full cluster (needs a long gap). Balance
 hold-length vs start-time; when the cluster is saturated, no job config conjures a free GPU.
 
+### Sub-rule: confirm the replacement is RUNNING before stopping the current worker
+When switching GPUs/tiers (e.g. A100 → H100), **submit the new worker and confirm it's RUNNING
+first, THEN stop the old one.** Never release a working GPU on the promise of a pending one —
+the replacement may be priority-blocked (`(Priority)`) or QOS-capped (`QOSMaxWallDurationPerJobLimit`)
+and pend for hours, leaving you with NO worker. (Learned the hard way: released a working A100,
+the H100 replacement was ~28h priority-blocked.) Also: pick the partition/QOS by both *availability*
+and *walltime cap* — `fitq` = 24h max but starts instantly (separate fairshare); `m3h` = 48h but
+its H100s are contended; `normal`/gpu = 7 days but low fairshare when you've run many jobs.
+
 ## Other essentials
 - **Env for running FMs:** `/fs04/scratch2/ub62/ssim0070/dermagent/bin/python`
   (torch 2.9.1+cu128, transformers 4.57.6). The login-node `~/.local` torch is broken.
