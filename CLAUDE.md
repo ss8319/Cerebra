@@ -56,6 +56,24 @@ Whenever you enable reasoning:
 Sampling params for thinking vs non-thinking differ — use the matching preset per the
 FM-docs rule above (Qwen3.5-27B thinking = temp 1.0/top_p 0.95; nonthinking = temp 0.7/top_p 0.8).
 
+## RULE: API base model + GPU tools → hold ONE persistent GPU worker, don't batch-per-run
+
+When the base/reasoning model is an API (OpenRouter/Qwen etc.) and only the *tools* need a
+GPU (PanDerm, DermoGPT, MedGemma — all fit on one L40S/A100), **do NOT submit a fresh batch
+job per run.** Each batch job re-queues (queue wait) AND reloads the 8B+4B model weights
+(~2-3 min) every time — pure waste, since the GPU is idle between the brief tool inferences.
+
+Instead: **hold ONE GPU with a persistent resident worker** that loads the tools once and
+services every iteration via a filesystem request queue. Drive iterations by dropping a
+request file; no re-queue, no reload.
+- Worker: `cerebra/dermarena/worker.py` · sbatch: `slurm/cerebra_worker.sbatch` (multi-hour hold)
+- Run an iteration: `bash slurm/cerebra_infer.sh <task> <jsonl> <limit> <out.jsonl>`
+- Stop it: `touch $CEREBRA_REQ_DIR/STOP` (frees the GPU — do this when done iterating).
+- Same pattern for DermAgent: `slurm/dermagent_worker.sbatch` + `warm_infer.sh`.
+
+Caveat: a long walltime is harder to backfill on a full cluster (needs a long gap). Balance
+hold-length vs start-time; when the cluster is saturated, no job config conjures a free GPU.
+
 ## Other essentials
 - **Env for running FMs:** `/fs04/scratch2/ub62/ssim0070/dermagent/bin/python`
   (torch 2.9.1+cu128, transformers 4.57.6). The login-node `~/.local` torch is broken.
