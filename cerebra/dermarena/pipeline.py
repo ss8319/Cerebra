@@ -46,6 +46,20 @@ def run_case(
     # Step 1 — SELECT: Qwen chooses which tools to run on which images.
     sel = select_tools(case, mllm=mllm)
     present = sel["present_images"]
+    tool_calls = sel["tool_calls"]
+
+    # Step 1b — CANDIDATES: if a closed-set classifier (PanDerm/DermoGPT) is selected,
+    # Qwen produces a top-10 differential (from text + tables + images) that PanDerm ranks.
+    candidates: List[str] = []
+    candidates_raw = None
+    if do_run and any(c["tool"] in ("panderm", "dermogpt") for c in tool_calls):
+        from cerebra.dermarena.candidates import propose_candidates
+        prop = propose_candidates(case, mllm=mllm, n=10)
+        candidates = prop["candidates"]
+        candidates_raw = prop["raw"]
+        for c in tool_calls:
+            if c["tool"] in ("panderm", "dermogpt"):
+                c["candidate_diseases"] = candidates
 
     # Step 2 + 3 — EXECUTE selected tools, then VERIFY (confirm | rerun ≤ max_rerun).
     findings: List[Dict[str, Any]] = []
@@ -53,9 +67,9 @@ def run_case(
     verify: Dict[str, Any] = {}
     rerun_count = 0
 
-    if do_run and sel["tool_calls"]:
+    if do_run and tool_calls:
         from cerebra.dermarena.run import run_calls  # lazy: pulls torch only on the GPU
-        findings = run_calls(case, sel["tool_calls"], tools=tools, max_retries=2)
+        findings = run_calls(case, tool_calls, tools=tools, max_retries=2)
 
     while True:
         verify = verify_or_rerun(case, findings, present, mllm=mllm,
@@ -86,10 +100,13 @@ def run_case(
         "diagnostic_test_gt": case.ground_truth.get("diagnostic_test_gt"),
         # image paths + selected modality-hint, kept for the trace viewer's image panel
         "case_images": {im["abs_path"]: im.get("modality") for im in present},
+        "candidates": candidates,   # Qwen top-10 DDx fed to PanDerm (if closed-set selected)
         "trace": {
             "select_reasoning": sel.get("reasoning"),
             "select_raw": sel.get("raw"),
-            "tool_calls": sel["tool_calls"],
+            "tool_calls": tool_calls,
+            "candidates": candidates,
+            "candidates_raw": candidates_raw,
             "findings": findings,
             "verify_action": verify.get("action"),
             "verify_raw": verify.get("raw"),

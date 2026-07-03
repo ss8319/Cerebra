@@ -13,11 +13,9 @@ from cerebra.dermarena.parse import extract_json
 
 TOOL_MENU = """Available specialist tools:
 - panderm  : zero-shot classifier for CLINICAL PHOTO or DERMOSCOPY skin-lesion images.
-             Ranks a list of candidate diagnoses YOU provide by visual similarity.
-             Requires candidate_diseases. Use only for skin lesions.
+             Visually ranks a differential (candidates are generated separately). Skin lesions only.
 - dermogpt : dermatology vision-language model for CLINICAL PHOTO or DERMOSCOPY.
-             Describes morphology and (given candidates) picks the best fit.
-             candidate_diseases optional. Use only for skin lesions.
+             Describes morphology and can pick the best fit. Skin lesions only.
 - medgemma : general medical image analyzer for ANY OTHER modality — histopathology,
              immunohistochemistry, radiology, gross pathology, immunofluorescence, etc.
              Grounds its reading in the case. Use for non-skin-photo images."""
@@ -33,15 +31,14 @@ judge from the image itself):
 
 {tool_menu}
 
-Decompose the case and choose the tool calls that will give you the diagnostic evidence
-you need. Return ONLY JSON:
+Decompose the case and choose which tools to run on which images. (For panderm/dermogpt
+the candidate differential is generated in a separate step — you only pick the tools here.)
+Return ONLY JSON:
 {{"reasoning": "<one or two sentences>",
   "tool_calls": [
-    {{"tool": "panderm|dermogpt|medgemma", "image_indices": [<int>, ...],
-      "candidate_diseases": ["<dx>", "..."]}}
+    {{"tool": "panderm|dermogpt|medgemma", "image_indices": [<int>, ...]}}
   ]}}
-Rules: image_indices refer to the IMAGES list above. candidate_diseases is REQUIRED for
-panderm, helpful for dermogpt, and ignored by medgemma. Select multiple tools/images as
+Rules: image_indices refer to the IMAGES list above. Select multiple tools/images as
 needed; skip images that add nothing. If there are no useful images, return an empty tool_calls."""
 
 
@@ -69,11 +66,8 @@ def select_tools(case: Case, mllm: Optional[OpenRouterMLLM] = None,
         paths = [present[i]["abs_path"] for i in idxs if isinstance(i, int) and 0 <= i < len(present)]
         if not paths:  # default to all present images if the model omitted indices
             paths = [im["abs_path"] for im in present]
-        calls.append({
-            "tool": tool,
-            "image_paths": paths,
-            "candidate_diseases": [str(d).strip() for d in (tc.get("candidate_diseases") or []) if str(d).strip()],
-        })
+        # candidate_diseases filled later by the dedicated candidates step (if closed-set).
+        calls.append({"tool": tool, "image_paths": paths, "candidate_diseases": []})
     return {
         "tool_calls": calls,
         "reasoning": obj.get("reasoning", ""),

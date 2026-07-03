@@ -21,7 +21,7 @@ from typing import Any, Dict, List
 
 from PIL import Image
 
-from cerebra.dermarena import select as _select, verify as _verify
+from cerebra.dermarena import select as _select, verify as _verify, candidates as _candidates
 
 
 def _esc(s: Any) -> str:
@@ -94,6 +94,15 @@ def _render_case(rec: Dict[str, Any]) -> str:
     if tr.get("verify_raw"):
         raw += f'<details><summary>VERIFY raw</summary><pre>{_esc(tr["verify_raw"])}</pre></details>'
 
+    # Step 1b — candidate DDx (only present when a closed-set classifier was selected)
+    cands = tr.get("candidates") or []
+    cand_html = ""
+    if cands:
+        cand_prompt = _prompt_details("Step 1b candidate DDx", [
+            ("SYSTEM", _candidates.SYSTEM), ("USER (template)", _candidates.USER_TEMPLATE)])
+        cand_html = (f'<h4>Step 1b · CANDIDATES — Qwen top-{len(cands)} DDx → PanDerm ranks</h4>{cand_prompt}'
+                     f'<ol class=cands>' + "".join(f"<li>{_esc(c)}</li>" for c in cands) + "</ol>")
+
     sel_prompt = _prompt_details("Step 1 tool-selection", [
         ("SYSTEM", _select.SYSTEM), ("USER (template)", _select.USER_TEMPLATE), ("TOOL MENU", _select.TOOL_MENU)])
     ver_prompt = _prompt_details("Step 3 confirm-or-rerun", [
@@ -112,6 +121,7 @@ def _render_case(rec: Dict[str, Any]) -> str:
       {sel_prompt}
       <div class=mut>{_esc(tr.get("select_reasoning"))}</div>
       {calls}
+      {cand_html}
       <h4>Step 2 · EXECUTE — tool findings</h4>{finds}
       <h4>Step 3 · VERIFY — confirm / rerun</h4>
       {ver_prompt}
@@ -146,6 +156,7 @@ figcaption{font-size:12px;color:#adbac7;margin-top:3px}.fn{color:#6e7681;font-si
 .tool{font-weight:600;color:#d2a8ff;font-size:12px}.fdx{color:#7ee787;font-weight:400}
 .finding .body{color:#adbac7;font-size:13px;white-space:pre-wrap}
 .role{display:inline-block;font-weight:600;color:#f0883e}
+ol.cands{margin:2px 0 8px;padding-left:20px}ol.cands li{margin:1px 0;font-size:13px}
 .empty{color:#6e7681;font-style:italic}
 pre{white-space:pre-wrap;word-break:break-word;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px;font-size:12px}
 pre.pred{border-color:#238636;background:#0d1a12;color:#7ee787}
@@ -171,12 +182,13 @@ SETUP_HTML = """
 <p>A simplified agentic loop for the DermArena dx-track (on the Cerebra repo). Qwen decides
 which specialist vision tools to run, then confirms the diagnosis or reruns a tool.
 Two LLM calls (<span class=star>★</span>) in the happy path, plus at most one rerun.</p>
-<div class=flow>1 SELECT  <span class=star>*</span> Qwen (27B) sees case text + images + tables -> chooses WHICH tools to run
-            on which images (+ candidate diagnoses for the closed-set classifiers)
-2 EXECUTE   run the selected tools (max 2 retries per tool)
-            panderm / dermogpt = clinical photo & dermoscopy ; medgemma = any other modality
-3 VERIFY  <span class=star>*</span> Qwen sees case + tool outputs -> CONFIRM (emit top-5 dx / test)
-            or RERUN one tool (max 1 rerun of the loop) -> EMIT</div>
+<div class=flow>1  SELECT     <span class=star>*</span> Qwen (27B) sees case text + images + tables -> chooses WHICH tools to run
+1b CANDIDATES <span class=star>*</span> if panderm/dermogpt is chosen: Qwen -> top-10 differential from
+              text+image+table; PanDerm then RANKS that list visually
+2  EXECUTE      run the selected tools (max 2 retries per tool)
+              panderm / dermogpt = clinical photo & dermoscopy ; medgemma = any other modality
+3  VERIFY     <span class=star>*</span> Qwen sees case + tool outputs -> CONFIRM (emit top-5 dx / test)
+              or RERUN one tool (max 1 rerun of the loop) -> EMIT</div>
 <h3>Models</h3>
 <table>
 <tr><th>Role</th><th>Model</th><th>Steps</th></tr>
